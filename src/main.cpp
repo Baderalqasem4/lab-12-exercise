@@ -251,7 +251,6 @@ int main() {
         }
 
         // TODO Q3: every frame, call update() on the scene and fullRefit() on the BVH.
-        // TODO Q4: rebuild the BVH with reset() instead of fullRefit().
 
         for (int y = 0; y < gScreenHeight; ++y) {
             for (int x = 0; x < gScreenWidth; ++x) {
@@ -266,7 +265,9 @@ int main() {
                 pixels[i + 2] = static_cast<std::uint8_t>(255 * color.z);  // B
                 pixels[i + 3] = static_cast<std::uint8_t>(255 * color.w);  // A
             }
-        }
+        }        
+        // TODO Q4: rebuild the BVH with reset() instead of fullRefit().
+
         texture.update(pixels.data());
 
         window.clear();
