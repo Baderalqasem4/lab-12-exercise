@@ -1,6 +1,5 @@
 // Lab 12: 2D ray tracing with a BVH. Work through the TODOs below and answer the questions in
 // written.txt.
-// TODO Bonus 2: some circles are drawn with their sides cut off; fix them.
 
 #include <algorithm>
 #include <array>
@@ -38,8 +37,7 @@ struct BVHNode {
     int childAOrIdx = -1;  // if leaf node, first index into index list, else child bvh node ptr
     int childBOrLen = -1;  // if leaf node, length into index list, else child bvh node ptr
     int isLeaf = 0;
-    // TODO Bonus 1: store each node's height in the tree and color its box in Draw by height.
-    int padding = 0;  // to get to POT size of 32 bytes.
+    int height = 0;  // store height of the node
 };
 static_assert(sizeof(BVHNode) == 32, "keep BVHNode a power-of-two size");
 
@@ -55,7 +53,13 @@ struct BVH {
         constructNode(0, static_cast<int>(indices.size()), 0);
     }
 
-    // TODO Q4: write a reset() function that rebuilds the tree instead of refitting it.
+    // rebuild the bvh using the current circle positions
+    void reset() {
+        nodes.clear();
+        std::iota(indices.begin(), indices.end(), 0);
+        nodes.push_back({});
+        constructNode(0, static_cast<int>(indices.size()), 0);
+    }
 
     void constructNode(int startIdx, int numIndices, int bvhOffset) {
         const std::vector<Circle>& prims = *primitives;
@@ -150,6 +154,9 @@ struct BVH {
         nodes.resize(nodes.size() + 2);  // filled in by the recursive calls
         constructNode(startIdx, smallerCount, childA);
         constructNode(startIdx + smallerCount, numIndices - smallerCount, childB);
+
+        // calculate the height using the taller child
+        nodes[bvhOffset].height = 1 + std::max(nodes[childA].height, nodes[childB].height);
     }
 
     // Refit every box bottom-up without changing the tree structure. Children are always stored
@@ -193,8 +200,6 @@ bool intersects(sf::Vector2f point, const BVHNode& node, const BVH& bvh, Vector4
 }
 
 // SOA layout for easy buffering
-// TODO Q3: store a 2D movement direction for each circle, and write an update() function that
-// moves every circle by its movement.
 struct Scene {
     std::size_t createCircle(sf::Vector2f position, float radius, const Vector4f& color) {
         circles.push_back({position, radius, color});
@@ -208,16 +213,58 @@ struct Scene {
 
     bool valid(std::size_t i) const { return i < circles.size(); }
 
+    // update the position of each circle
+    void update() {
+        for (std::size_t i = 0; i < circles.size(); i++) {
+            circles[i].position += movements[i];
+
+            // bounce off the left and right edges
+            if (circles[i].position.x <= circles[i].radius ||
+                circles[i].position.x >= gScreenWidth - circles[i].radius) {
+                movements[i].x *= -1;
+            }
+
+            // bounce off the top and bottom edges
+            if (circles[i].position.y <= circles[i].radius ||
+                circles[i].position.y >= gScreenHeight - circles[i].radius) {
+                movements[i].y *= -1;
+            }
+
+            // keep the circle inside the screen
+            circles[i].position.x = std::clamp(circles[i].position.x,
+                circles[i].radius, gScreenWidth - circles[i].radius);
+
+            circles[i].position.y = std::clamp(circles[i].position.y,
+                circles[i].radius, gScreenHeight - circles[i].radius);
+
+            }
+    }
+
     std::vector<Circle> circles;
+
+    // store the movement of each circle
+    std::vector<sf::Vector2f> movements;
+
 };
 
-void Draw(sf::RenderWindow& window, const AABB<float>& aabb) {
+void Draw(sf::RenderWindow& window, const AABB<float>& aabb, int height) {
     // draw frame of rectangle
     static sf::RectangleShape shape;
     shape.setSize(aabb.maxPoint - aabb.minPoint);
     shape.setPosition(aabb.minPoint);
     shape.setFillColor(sf::Color::Transparent);
-    shape.setOutlineColor(sf::Color::White);
+
+    // choose a color based on the height of the node
+    const sf::Color colors[] = {
+        sf::Color::Red,
+        sf::Color::Blue,
+        sf::Color::Green,
+        sf::Color::Yellow,
+        sf::Color::Magenta,
+        sf::Color::Cyan
+    };
+
+    shape.setOutlineColor(colors[height % 6]);
     shape.setOutlineThickness(1.0f);
     window.draw(shape);
 }
@@ -233,9 +280,19 @@ int main() {
     };
     Scene scene;
     for (int n = 0; n < 100; ++n) {
-        scene.createCircle({uniform(0, gScreenWidth), uniform(0, gScreenHeight)}, uniform(10, 20),
+
+        // generate the radius first
+        float radius = uniform(10, 20);
+
+
+
+        scene.createCircle({uniform(radius, gScreenWidth - radius), uniform(radius, gScreenHeight - radius)}, radius,
                            {uniform(0, 1), uniform(0, 1), uniform(0, 1), 1});
+
+        // assign a random movement to each circle
+        scene.movements.push_back({uniform(-1, 1), uniform(-1, 1)});
     }
+
     BVH bvh(scene.circles);
 
     std::vector<std::uint8_t> pixels(4 * gScreenWidth * gScreenHeight);  // RGBA, starts black
@@ -250,31 +307,42 @@ int main() {
                 if (key->code == sf::Keyboard::Key::Escape) window.close();
         }
 
-        // TODO Q3: every frame, call update() on the scene and fullRefit() on the BVH.
+        scene.update();
+        bvh.reset();
 
         for (int y = 0; y < gScreenHeight; ++y) {
             for (int x = 0; x < gScreenWidth; ++x) {
                 const sf::Vector2f pixel(static_cast<float>(x), static_cast<float>(y));
-                // TODO Q2: antialiasing. Take four samples at offsets of +-0.3333 from the pixel
-                // and average their colors.
-                Vector4f color{};  // stays transparent black on a miss
-                intersects(pixel, bvh.nodes[0], bvh, color);
+                Vector4f color1{};
+                Vector4f color2{};
+                Vector4f color3{};
+                Vector4f color4{};
+
+                // sample four points around the pixel
+                intersects(pixel + sf::Vector2f(-0.3333f, -0.3333f), bvh.nodes[0], bvh, color1);
+                intersects(pixel + sf::Vector2f(0.3333f, -0.3333f), bvh.nodes[0], bvh, color2);
+                intersects(pixel + sf::Vector2f(-0.3333f, 0.3333f), bvh.nodes[0], bvh, color3);
+                intersects(pixel + sf::Vector2f(0.3333f, 0.3333f), bvh.nodes[0], bvh, color4);
+
+                // average the four colors
+                Vector4f color = (color1 + color2 + color3 + color4) / 4.0f;
                 const std::size_t i = 4 * (static_cast<std::size_t>(y) * gScreenWidth + x);
+
                 pixels[i + 0] = static_cast<std::uint8_t>(255 * color.x);  // R
                 pixels[i + 1] = static_cast<std::uint8_t>(255 * color.y);  // G
                 pixels[i + 2] = static_cast<std::uint8_t>(255 * color.z);  // B
                 pixels[i + 3] = static_cast<std::uint8_t>(255 * color.w);  // A
             }
         }        
-        // TODO Q4: rebuild the BVH with reset() instead of fullRefit().
 
         texture.update(pixels.data());
 
         window.clear();
         window.draw(sprite);
-        // TODO Q1: only draw non-leaf nodes so the BVH structure is easier to see.
         for (const BVHNode& node : bvh.nodes) {
-            Draw(window, node.bounds);
+            if (!node.isLeaf) { 
+                Draw(window, node.bounds, node.height);
+            }
         }
         window.display();
     }

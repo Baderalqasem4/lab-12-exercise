@@ -1,5 +1,17 @@
 ﻿Q3. What happens to the bounding boxes with update + fullRefit?
 
+    When the circles move, the bounding boxes can become larger and overlap more because
+    the circles remain in their original BVH nodes. The tree structure does not change, which makes
+    intersection queries less efficient over time.
+
 Q4. What happens with reset (rebuild every frame) instead?
 
+    Rebuilding the BVH every frame groups the circles based on their current positions. 
+    This keeps the bounding boxes tighter and reduces overlap, which makes intersection queries
+    more efficient. But rebuilding the tree is more expensive than refitting it.
+
 Q5. Why are some circles drawn with their sides cut off?
+
+    Some circles are drawn with their sides cut off because their radius is not considered when choosing
+    their position. Since only pixels inside the screen are rendered, the parts outside the screen are cut off.
+    Overlapping circles can also hide parts of each other because the last circle hit determines the pixel color.
